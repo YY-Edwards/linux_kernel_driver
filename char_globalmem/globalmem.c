@@ -13,6 +13,7 @@
 #define GLOBALMEM_SIZE 	0x1000 	//4k
 #define MEM_CLEAR		0x1		//1
 #define GLOBALMEM_MAJOR	230
+#define DEVICE_NUM		10
 
 static int globalmem_major = GLOBALMEM_MAJOR;
 module_param(globalmem_major, int, S_IRUGO);//被加载时可以传递给他的值，
@@ -21,13 +22,19 @@ module_param(globalmem_major, int, S_IRUGO);//被加载时可以传递给他的�
 struct globalmem_dev{
 	struct cdev cdev;
 	unsigned char mem[GLOBALMEM_SIZE];
+	struct mutex mutex;
 };										
 
 struct globalmem_dev* globalmem_devp;
 
 static int globalmem_open(struct inode* inode, struct file* filp)
 {
-	filp->private_data = globalmem_devp;
+	//filp->private_data = globalmem_devp;
+	//通过结构体成员的指针
+	//找到对应结构体的指针。
+	struct globalmem_dev* devp = container_of(inode->i_cdev,
+												struct globalmem_dev, cdev);
+	filp->private_data = devp;											
 	return 0;	
 }
 
@@ -43,7 +50,9 @@ static long globalmem_ioctl(struct file* filp, unsigned int cmd,
 	switch(arg)
 	{
 		case MEM_CLEAR:
+			mutex_lock(&dev->mutex);
 			memset(dev->mem, 0, GLOBALMEM_SIZE);
+			mutex_unlock(&dev->mutex);
 			printk(KERN_INFO "globalmem is set to zero. \n");
 			break;
 		default:
@@ -69,6 +78,8 @@ static ssize_t globalmem_read(struct file* filp,
 	if(count > GLOBALMEM_SIZE -p)
 		count = GLOBALMEM_SIZE -p;
 	
+	mutex_lock(&dev->mutex);
+	
 	if(copy_to_user(buf, dev->mem +p, count)){
 		
 		return -EFAULT;
@@ -78,6 +89,8 @@ static ssize_t globalmem_read(struct file* filp,
 		
 		printk(KERN_INFO "read %u byte(s) from %lu \n", count, p);
 	}
+	
+	mutex_unlock(&dev->mutex);
 								  
 	return ret;								  				  
 }
@@ -97,6 +110,7 @@ static ssize_t globalmem_write(struct file* filp,
 	if(count > GLOBALMEM_SIZE - p)
 		count = GLOBALMEM_SIZE - p;
 	
+	mutex_lock(&dev->mutex);
 	if(copy_from_user(dev->mem + p, buf, count))
 		ret = -EFAULT;
 	else{
@@ -105,7 +119,7 @@ static ssize_t globalmem_write(struct file* filp,
 		
 		printk(KERN_INFO "written %u byte(s) from %lu  \n", count, p);
 	}
-	
+	mutex_unlock(&dev->mutex);
 	return ret;
 }
 
@@ -189,6 +203,7 @@ static void globalmem_setup_cdev(struct globalmem_dev* dev, int index)
 static int __init globalmem_init(void)
 {
 	int ret;
+	//int i;
 	//MKDEV： 是用来将主设备号和次设备号，转换成一个主次设备号的。(设备号)
 	dev_t devno = MKDEV(globalmem_major, 0);
 	
@@ -197,8 +212,10 @@ static int __init globalmem_init(void)
 	//Name:编号相关联的设备名称. (/proc/devices); 本组设备的驱动名称
 	if(globalmem_major)
 		ret = register_chrdev_region(devno, 1, "globalmem");//静态注册
+		//ret = register_chrdev_region(devno, DEVICE_NUM, "globalmem");//静态注册
 	else{
 		ret = alloc_chrdev_region(&devno, 0, 1, "globalmem");//动态注册
+		//ret = alloc_chrdev_region(&devno, 0, DEVICE_NUM, "globalmem");//动态注册
 		globalmem_major = MAJOR(devno);//从设备号中提取主设备号
 	}
 	
@@ -209,26 +226,37 @@ static int __init globalmem_init(void)
 	//kzalloc() 函数与 kmalloc() 非常相似，参数及返回值是一样的，可以说是前者是后者的一个变种，
 	//因为 kzalloc() 实际上只是额外附加了 __GFP_ZERO 标志。所以它除了申请内核内存外，还会对申请到的内存内容清零。
 	globalmem_devp = kzalloc(sizeof(struct globalmem_dev), GFP_KERNEL);
+	//globalmem_devp = kzalloc(sizeof(struct globalmem_dev)*DEVICE_NUM, GFP_KERNEL);
 	if(!globalmem_devp){
 		ret = -ENOMEM;
 		goto fail_malloc;
 	}
+	
+	mutex_init(&globalmem_devp->mutex);
 	globalmem_setup_cdev(globalmem_devp, 0);
+	// for(i =0; i<DEVICE_NUM; i++)
+		// globalmem_setup_cdev(globalmem_devp+i, i);
 	
 	printk(KERN_INFO "init char globalmem okay.\n");
 	return 0;
 	
 	fail_malloc:
 	unregister_chrdev_region(devno, 1);
+	//unregister_chrdev_region(devno, DEVICE_NUM);
 	return ret;
 }
 module_init(globalmem_init);
 
 static void __exit globalmem_exit(void)
 {
+	//int i;
 	cdev_del(&globalmem_devp->cdev);
+	// for(i =0; i<DEVICE_NUM; i++)
+		// cdev_del(&(globalmem_devp +i)->cdev);
+
 	kfree(globalmem_devp);
 	unregister_chrdev_region(MKDEV(globalmem_major, 0), 1);
+	//unregister_chrdev_region(MKDEV(globalmem_major, 0), DEVICE_NUM);
 	printk(KERN_INFO "exit char globalmem okay.\n");
 }
 module_exit(globalmem_exit);
