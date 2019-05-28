@@ -12,7 +12,7 @@
 
 #define GLOBALFIFO_SIZE 	0x1000 	//4k
 #define MEM_CLEAR		0x1		//1
-#define GLOBALFIFO_MAJOR	230
+#define GLOBALFIFO_MAJOR	231
 #define DEVICE_NUM		10
 
 static int globalfifo_major = GLOBALFIFO_MAJOR;
@@ -87,11 +87,11 @@ static ssize_t globalfifo_read(struct file* filp,
 			ret = -EAGAIN;
 			goto out;
 		}
-		__set_current_state(TASK_INTERUPTIBLE);//可被信号唤醒
+		__set_current_state(TASK_INTERRUPTIBLE);//可被信号唤醒
 		mutex_unlock(&dev->mutex);//睡眠前，先释放锁。
 		
 		schedule();//切换
-		if(signal_pending(current){//醒来后第一时间判断是否是因为信号而被唤醒
+		if(signal_pending(current)){//醒来后第一时间判断是否是因为信号而被唤醒
 			ret = -ERESTARTSYS;
 			goto out2;
 		
@@ -129,7 +129,7 @@ static ssize_t globalfifo_read(struct file* filp,
 		mutex_unlock(&dev->mutex);
 	
 	out2:
-		remove_wait_queue(&dev->w_wait, &wait);//移除wait
+		remove_wait_queue(&dev->r_wait, &wait);//移除wait
 		set_current_state(TASK_RUNNING);//设置状态
 	
 	return ret;								  				  
@@ -158,7 +158,7 @@ static ssize_t globalfifo_write(struct file* filp,
 			goto out;
 		}
 		//设置状态
-		__set_current_state(TASK_INTERUPTIBLE);
+		__set_current_state(TASK_INTERRUPTIBLE);
 		mutex_unlock(&dev->mutex);
 		schedule();//睡眠前，先释放锁。
 		if(signal_pending(current)){

@@ -1,8 +1,8 @@
 KVERS = $(shell uname -r)
 
 #Kernel modules
-obj-m +=chardriver_globalmem.o
-chardriver_globalmem-objs := globalmem.o
+obj-m +=chardriver_globalfifo.o
+chardriver_globalfifo-objs := globalfifo.o
 #Specify flags for the module compilation.
 EXTRA_CFLAGS=-g -o0
 
