@@ -8,6 +8,7 @@
 #include <linux/cdev.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/poll.h>
 
 
 #define GLOBALFIFO_SIZE 	0x1000 	//4k
@@ -26,10 +27,20 @@ struct globalfifo_dev{
 	struct mutex mutex;
 	wait_queue_head_t	r_wait;
 	wait_queue_head_t	w_wait;
+	struct fasync_struct* async_queue;
 	
 };										
 
 struct globalfifo_dev* globalfifo_devp;
+
+static int globalfifo_fasync(int fd, struct file *filp, int mode)  
+{  
+
+    struct globalfifo_dev* dev = filp->private_data; 
+	printk(KERN_INFO "app callback this. \n");
+    return fasync_helper(fd, filp, mode, &dev->async_queue);         //注册上层调用进程的信息，上层调用fcntl设置FASYNC会调用这个系统调用  
+}  
+  
 
 static int globalfifo_open(struct inode* inode, struct file* filp)
 {
@@ -44,6 +55,7 @@ static int globalfifo_open(struct inode* inode, struct file* filp)
 
 static int globalfifo_release(struct inode* inode, struct file* filp)
 {
+	globalfifo_fasync(-1, filp, 0);//异步里表中删除
 	return 0;
 }
 	
@@ -183,6 +195,15 @@ static ssize_t globalfifo_write(struct file* filp,
 				dev->current_len);
 		
 		wake_up_interruptible(&dev->r_wait);//允许读
+		
+		if(dev->async_queue){
+			kill_fasync(&dev->async_queue, SIGIO, POLL_IN);//释放信号
+			printk(KERN_INFO "%s kill SIGIO \n", __func__);		
+		}
+		else{		
+			printk(KERN_INFO "dev->async_queue is NULL! \n");	
+		}
+		
 		ret = count;
 	}
 	
@@ -267,9 +288,9 @@ static loff_t globalfifo_llseek(struct file* filp, loff_t offset, int orig)
 }
 
 
-static unsigned int globalfifo_poll(struct file* filp, poll_tabel* wait)
+static unsigned int globalfifo_poll(struct file* filp, poll_table* wait)
 {
-  unsigned int masl = 0;
+  unsigned int mask = 0;
   struct globalfifo_dev* dev = filp->private_data;
   
   mutex_lock(&dev->mutex);
@@ -283,7 +304,7 @@ static unsigned int globalfifo_poll(struct file* filp, poll_tabel* wait)
   }
   
   if(dev->current_len != GLOBALFIFO_SIZE){
-	  mask |= POLLOUT | POLLWRDNORM;
+	  mask |= POLLOUT | POLLWRNORM;
   }
   
   mutex_unlock(&dev->mutex);
@@ -300,6 +321,7 @@ static const struct file_operations globalfifo_fops = {
 	.open	= globalfifo_open,
 	.release = globalfifo_release,
 	.poll = globalfifo_poll,
+	.fasync = globalfifo_fasync, 
 };
 
 static void globalfifo_setup_cdev(struct globalfifo_dev* dev, int index)
